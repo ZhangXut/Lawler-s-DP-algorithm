@@ -1,0 +1,246 @@
+# -*- coding: utf-8 -*-
+"""
+Lawler's Algorithm 
+====================================
+"""
+import numpy as np
+import time
+
+def compress_values(value_dict):
+    """
+    Collects and sorts unique values from a dictionary (e.g., release dates) and returns:
+    1) A sorted list of unique values (unique_vals)
+    2) A mapping dictionary (idx_map) from original values to their compressed indices
+    """
+    unique_vals = sorted(list(set(value_dict.values())))  # Remove duplicates and sort release dates
+    idx_map = {val: i for i, val in enumerate(unique_vals)}  # Map each unique value to its index
+    
+    return unique_vals, idx_map
+
+def dp_algorithm(n, r_dict, p_dict, d_dict, w_dict):
+
+    
+    inf = 100000000  # Represents infinity; using a large integer value
+    
+    # 1) Data Preparation: Convert r_dict, p_dict, d_dict, w_dict into lists/arrays
+    #    and compress the release date values in r_dict.
+    r_values, r_idx_map = compress_values(r_dict)  # Remove duplicates and sort release dates
+    max_r_idx = len(r_values)  # Number of unique release dates
+    
+    sum_w = sum(w_dict.values())  # Total sum of weights to determine the range of W
+    W = sum_w + 1 
+    
+    # 2) Allocate NumPy arrays to store DP
+    # -------------------------------------------------
+    # C[j, r_idx, w]  Dimensions: (n+1) * (max_r_idx) * (W)
+    # P[j, r_idx, r_idx_prime, w] Dimensions: (n+1) * (max_r_idx) * (max_r_idx) * (W)
+    C = np.full((n+1, max_r_idx, W), inf, dtype=int)
+    P = np.full((n+1, max_r_idx, max_r_idx, W), inf, dtype=int)
+    
+    # To facilitate quick access, we first construct lists for later use
+    # j ranges from 1 to n
+    # Access to p_j, r_j, d_j, w_j can be done using p_list[j], r_list[j], etc.
+    # Alternatively, we could directly use the original p_dict[j]
+    r_list = [0]*(n+1)
+    p_list = [0]*(n+1)
+    d_list = [0]*(n+1)
+    w_list = [0]*(n+1)
+    for j in range(1, n+1):
+        r_list[j] = r_dict[j]
+        p_list[j] = p_dict[j]
+        d_list[j] = d_dict[j]
+        w_list[j] = w_dict[j]
+    
+    # 3) Initialize base cases
+    # -------------------------------------------------
+    # C[0, r_idx, 0] = r_val; other C[0, r_idx, w>0] = inf
+    for r_val in r_values:
+        r_idx = r_idx_map[r_val] 
+        C[0, r_idx, 0] = r_val
+    
+    # P[j-1, r_idx, r'_idx, 0] = 0, others +∞1
+    for j in range(1,n+1):
+        for r_val in r_values:
+            r_idx = r_idx_map[r_val]
+            for r_prime_val in r_values:
+                r_prime_idx = r_idx_map[r_prime_val]
+                # Only meaningful when r_val <= r_prime_val (similar to original if r <= r_prime)
+                if r_val <= r_prime_val:
+                    P[j-1, r_idx, r_prime_idx, 0] = 0
+    
+    # 4) Start Dynamic Programming Computation
+    # -------------------------------------------------
+    start_time = time.time()
+    
+    for j in range(1, n+1):
+        r_j = r_list[j]
+        p_j = p_list[j]
+        d_j = d_list[j]
+        w_j = w_list[j]
+        # -------------------------
+        # (1) Update C[j, r_idx, w]
+        # -------------------------
+        # Iterate through all possible r_idx (either ascending or descending), across W dimensions
+        for r_idx in range(max_r_idx):
+            r_val = r_values[r_idx]
+            if r_val > r_j: 
+                # Case 1: Cannot select job j
+                # Directly inherit C[j-1, r_idx, w_cap]     
+                for w_cap in range(W):            
+                    C[j, r_idx, w_cap] = C[j-1, r_idx, w_cap]
+            else:
+                # Case 2: r_val <= r_j b)
+
+                for w_cap in range(W):  
+                    tmp_c1 = C[j-1, r_idx, w_cap]
+                    if w_cap >= w_j:
+                        tmp_c2 = max(r_j, C[j-1, r_idx, w_cap - w_j]) + p_j
+                    else:
+                        tmp_c2 = r_j + p_j
+            
+                    tmp_c3 = inf
+                    for r_prime_val in list(r_dict.values())[:j-1]:
+                        if r_prime_val >= r_j:
+                            r_prime_idx = r_idx_map[r_prime_val]
+                            upper_w_prime = w_cap - w_j
+                            for w_prime in range(upper_w_prime + 1):
+                                
+                                c_j_1 = C[j-1, r_prime_idx, w_prime]
+                                p_j_1 = P[j-1, r_idx, r_prime_idx, w_cap - w_j - w_prime]
+                                
+                                val = c_j_1 + max(0, p_j - r_prime_val + r_j + p_j_1)
+                                
+                                if val < tmp_c3:
+                                    tmp_c3 = val
+              
+                    best_C = min(tmp_c1, tmp_c2, tmp_c3)
+                    # If exceeding deadline, set to inf
+                    if best_C > d_j:
+                        best_C = inf
+
+                    C[j, r_idx, w_cap] = best_C
+
+        # -------------------------
+        # (2) Update P[j, r_idx, r_prime_idx, w]
+        # -------------------------
+        # Note: This part only needs to be calculated when j < n, not for the last iteration
+        if j < n:
+            for r_idx_ in range(max_r_idx):
+                r_val_ = r_values[r_idx_]
+                for r_prime_idx in range(max_r_idx):
+                    r_prime_val = r_values[r_prime_idx]
+                    if r_val_ < r_prime_val:
+                        for w_cap in range(W):
+                            # option_1: Recurrence from P[j, r_plus, r_prime_idx, w_cap]
+                            # where r_plus > r_val_
+                            # Find the next release date index greater than r_val_
+                            if r_idx_ < max_r_idx - 1:
+                                # Next r_plus index
+                                r_plus_idx = r_idx_ + 1
+                                
+                                option_1 = P[j, r_plus_idx, r_prime_idx, w_cap]
+                            else:
+                                option_1 = inf
+                            
+                            
+                            # option_2: The innermost double loop
+                            option_2 = inf
+                            for w_prime in range(w_cap + 1):
+                                c_val = C[j, r_idx_, w_prime]  # C[j, r_val_, w_prime]
+                                if c_val < inf:  # If c_val is already inf, no need to proceed
+                                    # Find the smallest release date >= c_val as r_double_idx
+                                    # Binary search is used here to find r_double_prime
+                                    # To reduce the overhead of linear search
+                                    # ------------------------------------------------
+                                    r_double_idx = None
+                                    # r_double_prime >= c_val
+                                    # If r_values[-1] < c_val, it means it cannot be found
+                                    # If r_values[0] >= c_val, select index 0
+                                    
+                                    #......................................................
+                                    left = 0
+                                    right = max_r_idx - 1
+                                    if r_values[right] < c_val:
+                                        # Indicates not found
+                                        pass
+                                    else:
+                                        # Binary search
+                                        while left < right:
+                                            mid = (left + right) // 2
+                                            if r_values[mid] >= c_val:
+                                                right = mid
+                                            else:
+                                                left = mid + 1
+                                        r_double_idx = left
+                                                                            
+                                    if r_double_idx is not None and r_double_idx <= max_r_idx:
+                                        # Now check if r_double_prime < r_prime_val
+                                        # r_double_prime = r_values[r_double_idx]
+                                        if r_values[r_double_idx] <= r_prime_val:
+                                            p_j_val = P[j, r_double_idx, r_prime_idx, w_cap - w_prime]
+                                            
+                                            val = max(0, c_val - r_list[j+1]) + p_j_val
+                                            if val < option_2:
+                                                option_2 = val
+                                   
+                            # Update P table with the minimum of option_1 and option_2
+                            P[j, r_idx_, r_prime_idx, w_cap] = min(option_1, option_2)
+
+    # Calculate execution time
+    end_time = time.time()
+    print(f"Execution time: {end_time - start_time:.4f} seconds")
+
+    # 5) Find the optimal solution here
+    # -------------------------------------------------
+    min_r_val = min(r_values)
+    min_r_idx = r_idx_map[min_r_val]
+
+    best_w = 0
+    for w_cap in range(W):
+        if C[n, min_r_idx, w_cap] < inf:
+            best_w = w_cap
+
+    print(f"Optimal feasible solution's w_cap = {best_w}, C[{n}, {min_r_idx}, {best_w}] = {C[n, min_r_idx, best_w]}")
+    
+    return C, P
+
+
+if __name__ == '__main__':
+
+    # -----------------
+    # Load Data
+    # -----------------
+    n = 10  # Number of jobs
+    tau = 0.5  # Parameter for release date generation
+    beta = 5  # Parameter for slack time generation
+
+    # Generate processing durations (p) for each job, rounded to 2 decimal places
+    p = {j: np.around(1 + 9 * np.random.rand(), 2) for j in range(1, n + 1)}
+
+    delta = 0.5  # Parameter for bias calculation
+    # Generate bias values, rounded to the nearest integer
+    bias = np.around(((1 - delta) + 2 * delta * np.random.rand(n)), 0)
+
+    # Generate weights (w) for each job as random integers between 1 and 99
+    w = {j: np.random.randint(1, 100) for j in range(1, n + 1)}
+
+    # Calculate the total processing time
+    P_total = sum(p.values())
+
+    # Calculate the mean processing time
+    P_mean = np.mean(list(p.values()))
+
+    # Generate release dates (r) for each job, scaled by tau and P_total, rounded to 2 decimal places
+    r = {j: np.around(tau * P_total * np.random.rand(), 2) for j in range(1, n + 1)}
+
+    # Generate slack times (slack) for each job, scaled by beta and P_mean, rounded to 2 decimal places
+    slack = {j: np.around(beta * P_mean * np.random.rand(), 2) for j in range(1, n + 1)}
+
+    # Calculate deadlines (d) for each job as the sum of release date, processing duration, and slack time
+    d = {j: r[j] + p[j] + slack[j] for j in range(1, n + 1)}
+
+    # Call the optimized Dynamic Programming (DP) algorithm with the generated data
+    C, P = dp_algorithm(n, r, p, d, w)
+
+
+
